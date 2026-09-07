@@ -31,6 +31,7 @@ In this lab, you will:
     oci setup keys --key-name packer_cli
     oci setup repair-file-permissions --file ~/.oci/packer_cli.pem 
     oci setup repair-file-permissions --file ~/.oci/packer_cli_public.pem
+    oci iam user api-key upload --user-id $OCI_CS_USER_OCID --key-file ~/.oci/packer_cli_public.pem                                                         
     ```
 
 3. Modify the environment vairables to use as inputs for packer
