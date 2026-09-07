@@ -1,0 +1,194 @@
+#cloud-config
+# Render with Terraform templatefile(). Required values are supplied by the
+# deployment definition, not baked into the image. TLS material must be fetched
+# before this script when tls_mode is "provided"; metadata is not secret storage.
+
+write_files:
+  - path: /usr/local/sbin/configure-postgresql-instance
+    owner: root:postgresql
+    permissions: "0750"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      POSTGRESQL_MAJOR="${postgresql_major}"
+      POSTGRESQL_PORT="${postgresql_port}"
+      ADMIN_CIDR="${admin_cidr}"
+      POSTGRESQL_CLIENT_CIDR="${postgresql_client_cidr}"
+      DATA_VOLUME_DEVICE="${data_volume_device}"
+      DATA_VOLUME_MOUNT_POINT="${data_volume_mount_point}"
+      DATA_VOLUME_WAIT_SECONDS="${data_volume_wait_seconds}"
+      INITIALIZE_EMPTY_DATA_VOLUME="${initialize_empty_data_volume}"
+      TLS_MODE="${tls_mode}"
+      TLS_CERT_FILE="${tls_cert_file}"
+      TLS_KEY_FILE="${tls_key_file}"
+
+      if ! [[ "$${POSTGRESQL_MAJOR}" =~ ^[0-9]+$ ]]; then
+        echo "POSTGRESQL_MAJOR must be numeric" >&2
+        exit 1
+      fi
+      if ! [[ "$${POSTGRESQL_PORT}" =~ ^[0-9]+$ ]] || (( POSTGRESQL_PORT < 1 || POSTGRESQL_PORT > 65535 )); then
+        echo "POSTGRESQL_PORT must be between 1 and 65535" >&2
+        exit 1
+      fi
+      if [[ "$${DATA_VOLUME_DEVICE}" != /* || "$${DATA_VOLUME_MOUNT_POINT}" != /* || "$${TLS_CERT_FILE}" != /* || "$${TLS_KEY_FILE}" != /* ]]; then
+        echo "Device, mount point, and TLS paths must be absolute" >&2
+        exit 1
+      fi
+      if [[ "$${ADMIN_CIDR}" == "0.0.0.0/0" || "$${ADMIN_CIDR}" == "::/0" || "$${POSTGRESQL_CLIENT_CIDR}" == "0.0.0.0/0" || "$${POSTGRESQL_CLIENT_CIDR}" == "::/0" ]]; then
+        echo "Broad internet CIDRs are not permitted for SSH or PostgreSQL" >&2
+        exit 1
+      fi
+
+      # Terraform attaches the volume only after OCI has launched the instance.
+      # Wait here instead of racing cloud-init against the volume attachment.
+      for _ in $(seq 1 "$${DATA_VOLUME_WAIT_SECONDS}"); do
+        [[ -b "$${DATA_VOLUME_DEVICE}" ]] && break
+        sleep 1
+      done
+      if [[ ! -b "$${DATA_VOLUME_DEVICE}" ]]; then
+        echo "Persistent data volume $${DATA_VOLUME_DEVICE} did not appear" >&2
+        exit 1
+      fi
+
+      filesystem_type="$(blkid -s TYPE -o value "$${DATA_VOLUME_DEVICE}" || true)"
+      if [[ -z "$${filesystem_type}" ]]; then
+        if [[ "$${INITIALIZE_EMPTY_DATA_VOLUME}" != "true" ]]; then
+          echo "Data volume is blank and initialization is disabled" >&2
+          exit 1
+        fi
+        mkfs.xfs -f "$${DATA_VOLUME_DEVICE}"
+        filesystem_type="xfs"
+      fi
+      if [[ "$${filesystem_type}" != "xfs" ]]; then
+        echo "Expected an xfs data volume, found $${filesystem_type}" >&2
+        exit 1
+      fi
+
+      install --directory --mode 0755 "$${DATA_VOLUME_MOUNT_POINT}"
+      volume_uuid="$(blkid -s UUID -o value "$${DATA_VOLUME_DEVICE}")"
+      if ! awk -v mount_point="$${DATA_VOLUME_MOUNT_POINT}" '$2 == mount_point { found = 1 } END { exit !found }' /etc/fstab; then
+        printf 'UUID=%s %s xfs defaults 0 2\n' "$${volume_uuid}" "$${DATA_VOLUME_MOUNT_POINT}" >>/etc/fstab
+      fi
+      if ! mountpoint -q "$${DATA_VOLUME_MOUNT_POINT}"; then
+        mount "$${DATA_VOLUME_MOUNT_POINT}"
+      fi
+      mounted_uuid="$(findmnt -n -o UUID --target "$${DATA_VOLUME_MOUNT_POINT}" || true)"
+      if [[ "$${mounted_uuid}" != "$${volume_uuid}" ]]; then
+        echo "Unexpected filesystem mounted at $${DATA_VOLUME_MOUNT_POINT}" >&2
+        exit 1
+      fi
+
+      install --directory --owner postgres --group postgres --mode 0750 /etc/postgresql-instance
+      install --directory --owner postgres --group postgres --mode 0750 "$(dirname "$${TLS_CERT_FILE}")"
+
+      case "$${TLS_MODE}" in
+        self-signed)
+          if [[ ! -s "$${TLS_CERT_FILE}" || ! -s "$${TLS_KEY_FILE}" ]]; then
+            openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 30 \
+              -subj "/CN=$(hostname -f 2>/dev/null || hostname)" \
+              -keyout "$${TLS_KEY_FILE}" \
+              -out "$${TLS_CERT_FILE}"
+          fi
+          ;;
+        provided)
+          if [[ ! -s "$${TLS_CERT_FILE}" || ! -s "$${TLS_KEY_FILE}" ]]; then
+            echo "TLS certificate or private key is missing" >&2
+            exit 1
+          fi
+          ;;
+        *)
+          echo "TLS_MODE must be self-signed or provided" >&2
+          exit 1
+          ;;
+      esac
+      chown postgres:postgres "$${TLS_CERT_FILE}" "$${TLS_KEY_FILE}"
+      chmod 0600 "$${TLS_KEY_FILE}"
+
+      PGDATA="$${DATA_VOLUME_MOUNT_POINT}/postgresql/$${POSTGRESQL_MAJOR}/main"
+      if [[ -f "$${PGDATA}/PG_VERSION" ]]; then
+        existing_major="$(tr -d '[:space:]' <"$${PGDATA}/PG_VERSION")"
+        if [[ "$${existing_major}" != "$${POSTGRESQL_MAJOR}" ]]; then
+          echo "Data volume contains PostgreSQL $${existing_major}, not $${POSTGRESQL_MAJOR}" >&2
+          exit 1
+        fi
+      else
+        if [[ -e "$${PGDATA}" ]] && [[ -n "$(find "$${PGDATA}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+          echo "PGDATA exists but is not a recognized cluster; refusing to overwrite it" >&2
+          exit 1
+        fi
+        install --directory --owner postgres --group postgres --mode 0700 "$${PGDATA}"
+        runuser -u postgres -- "/usr/lib/postgresql/$${POSTGRESQL_MAJOR}/bin/initdb" \
+          --pgdata="$${PGDATA}" \
+          --auth-local=peer \
+          --auth-host=scram-sha-256 \
+          --encoding=UTF8
+      fi
+
+      # PGDATA stays on the persistent volume. This include points to a small
+      # per-VM policy file, regenerated from metadata on every replacement VM.
+      if ! grep -Fqx "include_if_exists = '/etc/postgresql-instance/instance.conf'" "$${PGDATA}/postgresql.conf"; then
+        printf "\ninclude_if_exists = '/etc/postgresql-instance/instance.conf'\n" >>"$${PGDATA}/postgresql.conf"
+      fi
+
+      cat >/etc/postgresql-instance/instance.conf <<POSTGRESQL_CONF
+      listen_addresses = '*'
+      port = $${POSTGRESQL_PORT}
+      password_encryption = 'scram-sha-256'
+      hba_file = '/etc/postgresql-instance/pg_hba.conf'
+      ssl = on
+      ssl_min_protocol_version = 'TLSv1.2'
+      ssl_cert_file = '$${TLS_CERT_FILE}'
+      ssl_key_file = '$${TLS_KEY_FILE}'
+      POSTGRESQL_CONF
+      cat >/etc/postgresql-instance/pg_hba.conf <<POSTGRESQL_HBA
+      # This policy is rebuilt from deployment metadata on every VM replacement.
+      local   all             postgres                                peer
+      local   all             all                                     peer
+      hostssl all             all             $${POSTGRESQL_CLIENT_CIDR} scram-sha-256
+      POSTGRESQL_HBA
+      chown postgres:postgres /etc/postgresql-instance/instance.conf /etc/postgresql-instance/pg_hba.conf
+      chmod 0640 /etc/postgresql-instance/instance.conf /etc/postgresql-instance/pg_hba.conf
+
+      cat >/etc/systemd/system/postgresql-instance.service <<SYSTEMD_UNIT
+      [Unit]
+      Description=PostgreSQL instance backed by the persistent OCI Block Volume
+      Wants=network-online.target
+      After=network-online.target local-fs.target
+      RequiresMountsFor=$${PGDATA}
+
+      [Service]
+      Type=simple
+      User=postgres
+      Group=postgres
+      RuntimeDirectory=postgresql
+      RuntimeDirectoryMode=2775
+      ExecStart=/usr/lib/postgresql/$${POSTGRESQL_MAJOR}/bin/postgres -D $${PGDATA}
+      ExecReload=/bin/kill -HUP \$MAINPID
+      KillSignal=SIGINT
+      TimeoutStopSec=300
+      Restart=on-failure
+
+      [Install]
+      WantedBy=multi-user.target
+      SYSTEMD_UNIT
+
+      # Replace the image's no-ingress baseline only with precise deployment
+      # rules. TCP/22 supports approved administration and TCP/5432 supports
+      # PostgreSQL clients, including external pgbench, psql, pgAdmin, or DBeaver.
+      ufw --force reset
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow from "$${ADMIN_CIDR}" to any port 22 proto tcp comment 'approved SSH administration'
+      ufw allow from "$${POSTGRESQL_CLIENT_CIDR}" to any port "$${POSTGRESQL_PORT}" proto tcp comment 'approved PostgreSQL clients'
+      ufw --force enable
+
+      systemctl disable --now postgresql.service || true
+      systemctl daemon-reload
+      systemctl enable --now postgresql-instance.service
+      systemctl is-active --quiet postgresql-instance.service
+
+runcmd:
+  - [bash, -lc, "/usr/local/sbin/configure-postgresql-instance"]
+
+final_message: "PostgreSQL persistent-volume configuration completed."

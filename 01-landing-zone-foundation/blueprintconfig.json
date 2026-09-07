@@ -1,0 +1,109 @@
+// Blueprint Factory source configuration for the Landing Zone Foundation lab.
+//
+// This file deliberately uses Jsonnet (rather than plain JSON) even though its
+// filename follows the lab convention. Generate the deployable artifacts with:
+//   bash /Users/seaguado/src/oci-landing-zone-operating-entities/gen/generate.sh \
+//     --config oci-pg/livelab/01-landing-zone-foundation/blueprintconfig.json \
+//     oci-pg/livelab/01-landing-zone-foundation/lz-config
+//
+// CIDR plan (all contained by 10.0.0.0/16):
+// - Hub E: 10.0.0.0/21
+// - LAB production-like workload VCN: 10.0.40.0/21
+// - LAB OKE platform VCN: 10.0.80.0/21
+// - Kubernetes Services: 10.0.250.0/24
+//
+// The manual OKE subnet map is intentional: it is the supported way to keep
+// the OKE platform VCN at /21. It is a lab-sized allocation, not a production
+// capacity commitment. The private Kubernetes API is reachable from the Hub
+// management subnet (10.0.1.0/24); replace that CIDR with an approved admin
+// network before deployment.
+//
+// External collaborator workload groups use this existing identity domain.
+// Operating-team groups and their policies are deliberately unqualified: OCI
+// resolves those principals to the tenancy's Default identity domain.
+// The OCID provisions extc groups; the display name is used in its IAM policy
+// statements.
+local hub_vcn = '10.0.0.0/21';
+local workload_vcn = '10.0.40.0/21';
+local oke_vcn = '10.0.80.0/21';
+
+{
+  region: 'eu-stockholm-1',
+  region_short_name: 'arn',
+  realm: 'oc1',
+  cis_level: 1,
+  security_targets: ['lab'],
+
+  existing_identity_domain: {
+    id: 'ocid1.domain.oc1..aaaaaaaai5hjnwyjwstn34pmkpr6yhn46wnkf7xgjpdfdfciebfaickcozja',
+    name: 'extc',
+  },
+
+  // Hub E is the DRG-only hub model. It provides hub-and-spoke routing without
+  // a network-firewall transit path.
+  hub: {
+    kind: 'hub_e',
+    network: { vcn: hub_vcn },
+  },
+
+  environments: {
+    // "lab" is the requested environment name. This is the production-like
+    // workload boundary for this lab, so generated resource names use LAB.
+    lab: {
+      project_network: {
+        network: {
+          vcn: workload_vcn,
+          subnets: {
+            web: '10.0.40.0/24',
+            app: '10.0.41.0/24',
+            db: '10.0.42.0/24',
+            infra: '10.0.43.0/24',
+          },
+        },
+      },
+
+      // These project areas become dedicated project compartments. Their
+      // subnets stay in the LAB network compartment, as required by the
+      // Blueprint Factory's project-network model.
+      projects: {
+        project_one: {
+          subnets: {
+            app: '10.0.44.0/24',
+          },
+        },
+        project_two: {
+          subnets: {
+            app: '10.0.45.0/24',
+          },
+        },
+      },
+
+      platforms: {
+        oke: {
+          network: {
+            vcn: oke_vcn,
+            // Native OKE requires these four subnet names. The manual map
+            // retains the requested /21 platform VCN boundary.
+            subnets: {
+              pods: '10.0.80.0/23',
+              workers: '10.0.82.0/24',
+              'int-lb': '10.0.83.0/26',
+              'control-plane': '10.0.83.64/29',
+            },
+          },
+          extension: {
+            type: 'oke_simple',
+            params: {
+              // The version currently used by this factory's published OKE
+              // profile. Confirm availability in the target region at plan time.
+              kubernetes_version: 'v1.35.2',
+              cni_type: 'native',
+              services_cidr: '10.0.250.0/24',
+              api_endpoint_allowed_cidrs: ['10.0.1.0/24'],
+            },
+          },
+        },
+      },
+    },
+  },
+}

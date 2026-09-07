@@ -18,8 +18,4 @@ The final labs compare flexible x86 and ARM shapes, then deploy PostgreSQL to Or
 4. Lab 3 - Deploy PostgreSQL on an OCI VM with Terraform
 5. Lab 4 - Resize PostgreSQL Storage and Change Performance Online
 6. Lab 5 - Compare Flexible and Ampere Compute Options
-7. Lab 6 - Deploy PostgreSQL on OKE with GitOps
-
-## Workshop Prerequisites
-
-(Will provide in upcoming days)
+7. MultiCloud

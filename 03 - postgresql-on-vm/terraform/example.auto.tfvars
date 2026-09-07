@@ -1,0 +1,6 @@
+image_ocid = "replace_me"
+ssh_public_key = "replace_me"
+admin_cidr="replace_me"
+postgresql_client_cidr="replace_me"
+subnet_ocid = "ocid1.subnet.oc1.abcde"
+nsg_ocid="ocid1.networksecuritygroup.oc1.abcde"
