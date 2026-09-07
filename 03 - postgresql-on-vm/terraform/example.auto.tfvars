@@ -1,4 +1,4 @@
-image_ocid = "replace_me"
+image_ocid = "ocid1.image.oc1.eu-stockholm-1.abcde"
 ssh_public_key = "replace_me"
 admin_cidr="replace_me"
 postgresql_client_cidr="replace_me"

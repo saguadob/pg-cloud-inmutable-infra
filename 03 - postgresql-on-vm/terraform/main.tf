@@ -1,5 +1,5 @@
 locals {
-  postgresql_cloud_init = templatefile("postgresql-instance.yaml", {
+  postgresql_cloud_init = templatefile("cloud-init.yaml", {
     admin_cidr                   = var.admin_cidr
     data_volume_device           = var.data_volume_device
     data_volume_mount_point      = var.data_volume_mount_point

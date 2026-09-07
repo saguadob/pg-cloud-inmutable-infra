@@ -58,7 +58,7 @@ build {
       "POSTGRESQL_MAJOR=${var.postgresql_major}",
     ]
     execute_command = "sudo -S sh -c '{{ .Vars }} {{ .Path }}'"
-    script          = "${path.root}/install-postgresql.sh"
+    script          = "${path.root}/scripts/install-postgresql.sh"
   }
 
   # This is deliberately the last provisioner. It removes build identity and
@@ -69,6 +69,6 @@ build {
       "BUILD_SSH_USERNAME=ubuntu",
     ]
     execute_command = "sudo -E bash '{{ .Path }}'"
-    script          = "${path.root}/finalize-image.sh"
+    script          = "${path.root}/scripts/finalize-image.sh"
   }
 }

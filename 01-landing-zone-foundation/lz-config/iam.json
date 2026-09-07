@@ -602,6 +602,17 @@
                     "allow any-user to read load-balancers in tenancy where all { request.principal.type = 'vnpa-service' }",
                     "allow any-user to read network-security-group in tenancy where all { request.principal.type = 'vnpa-service' }"
                 ]
+            },
+            "PCY-EXT-LAB-KEY": {
+                "name"                                             : "pcy-ext-lab",
+                "description"                                      : "Grants access to perform labs",
+                "compartment_id"                                   : "TENANCY-ROOT",
+
+                "statements": [
+                    "allow group 'extc'/'grp-lz-lab-project_one-admin' to use cloud-shell in tenancy",
+                    "allow group 'extc'/'grp-lz-lab-project_one-admin' to use cloud-shell-public-network in tenancy",
+                    "allow group 'extc'/'grp-lz-lab-project_one-admin' read all-resources in tenancy"
+                ]
             }
         }
     }

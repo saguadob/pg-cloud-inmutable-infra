@@ -682,6 +682,15 @@
                                         "dst_port_max"                       : 22,
                                         "protocol"                           : "TCP",
                                         "stateless"                          : false
+                                    },
+                                    "infra_ssh_22": {
+                                        "description"                        : "Allow inbound traffic from Lab infra subnet over SSH",
+                                        "src"                                : "NSG-ARN-LAB-PROJECT-INFRA-KEY",
+                                        "src_type"                           : "NETWORK_SECURITY_GROUP",
+                                        "dst_port_min"                       : 22,
+                                        "dst_port_max"                       : 22,
+                                        "protocol"                           : "TCP",
+                                        "stateless"                          : false
                                     }
                                 },
 
@@ -854,6 +863,35 @@
                                 },
 
                                 "egress_rules": {
+                                    "anywhere": {
+                                        "description"                        : "Allow all outbound traffic to 0.0.0.0/0 over TCP",
+                                        "dst"                                : "0.0.0.0/0",
+                                        "dst_type"                           : "CIDR_BLOCK",
+                                        "protocol"                           : "TCP",
+                                        "stateless"                          : false
+                                    }
+                                }
+                            },
+
+                            "NSG-ARN-LAB-PROJECT-INFRA-KEY": {
+                                "display_name"                               : "nsg-arn-lz-proj-infra",
+                                "ingress_rules": {
+                                    "mgmt": {
+                                        "description"                        : "Allow inter mgmt connectivity",
+                                        "src"                                : "NSG-ARN-LAB-PROJECT-INFRA-KEY",
+                                        "src_type"                           : "NETWORK_SECURITY_GROUP",
+                                        "protocol"                           : "TCP",
+                                        "stateless"                          : false
+                                    }
+                                },
+                                "egress_rules": {
+                                  "mgmt": {
+                                      "description"                        : "Allow inter mgmt connectivity",
+                                      "dst"                                : "NSG-ARN-LAB-PROJECT-INFRA-KEY",
+                                      "dst_type"                           : "NETWORK_SECURITY_GROUP",
+                                      "protocol"                           : "TCP",
+                                      "stateless"                          : false
+                                  },
                                     "anywhere": {
                                         "description"                        : "Allow all outbound traffic to 0.0.0.0/0 over TCP",
                                         "dst"                                : "0.0.0.0/0",
